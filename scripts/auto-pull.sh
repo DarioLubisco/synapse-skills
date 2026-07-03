@@ -1,49 +1,74 @@
 #!/usr/bin/env bash
 # auto-pull.sh
-# Verifica si hay cambios remotos en GitHub y los trae automáticamente.
-# Ideal para ejecutar via cron (cada 5-10 minutos).
-# 
-# Uso en crontab (cada 10 minutos):
-#   */10 * * * * /home/synapse/source/synapse-skills/scripts/auto-pull.sh >> /tmp/synapse-skills-autopull.log 2>&1
+# Verifica si hay cambios remotos en TODOS los repos de ~/source/ y los trae automáticamente.
+# Para synapse-skills, además regenera las reglas .mdc para Cursor 2.5.
+#
+# Instalado como systemd --user timer (cada 10 minutos).
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-LOG_FILE="/tmp/synapse-skills-autopull.log"
+SOURCE_DIR="$HOME/source"
+LOG_FILE="/tmp/synapse-autopull.log"
+NOW="[$(date '+%Y-%m-%d %H:%M:%S')]"
 
-# No loguear si no hay cambios (silencioso)
-cd "$REPO_DIR"
+# Repos a ignorar (no son de DarioLubisco o no tienen remote)
+IGNORE_REPOS=(
+    "plane"
+)
 
-# Fetch sin merge para ver si hay cambios
-git fetch origin 2>/dev/null || {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️  git fetch falló (sin conexión?)"
-    exit 0
+sync_repo() {
+    local repo_dir="$1"
+    local repo_name="$2"
+    
+    cd "$repo_dir" || return 0
+    
+    # Solo si tiene remote 'origin' en GitHub
+    local remote_url
+    remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+    [[ "$remote_url" != *"github.com"* ]] && return 0
+    
+    # Fetch silencioso
+    git fetch origin 2>/dev/null || return 0
+    
+    # Verificar si hay cambios
+    local local_ref remote_ref
+    local_ref=$(git rev-parse @ 2>/dev/null || echo "")
+    remote_ref=$(git rev-parse @{u} 2>/dev/null || echo "")
+    
+    [[ -z "$remote_ref" ]] && return 0
+    [[ "$local_ref" = "$remote_ref" ]] && return 0
+    
+    # Hay cambios — hacer pull
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    
+    echo "$NOW 🔄 $repo_name: cambios detectados → pull en $branch"
+    
+    if git pull --ff-only origin "$branch" 2>&1; then
+        echo "$NOW ✅ $repo_name: pull exitoso"
+        
+        # Para synapse-skills: sync a Cursor 2.5
+        if [ "$repo_name" = "synapse-skills" ] && [ -x "$repo_dir/scripts/sync-to-cursor.sh" ]; then
+            "$repo_dir/scripts/sync-to-cursor.sh" 2>&1
+            echo "$NOW ✅ Cursor rules actualizadas"
+        fi
+    else
+        echo "$NOW ❌ $repo_name: pull falló (conflictos?)"
+    fi
 }
 
-# Comparar con remote
-LOCAL=$(git rev-parse @ 2>/dev/null || echo "")
-REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
+# Escanear todos los repos en ~/source/
+echo "$NOW === Auto-Pull: Synapse OS Repos ==="
 
-if [ -z "$REMOTE" ]; then
-    # No hay upstream configurado
-    exit 0
-fi
-
-if [ "$LOCAL" = "$REMOTE" ]; then
-    # Está al día, silencioso
-    exit 0
-fi
-
-# Hay cambios remotos — hacer pull
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🔄 Cambios detectados en GitHub. Pullando..."
-
-if git pull --ff-only origin main 2>&1; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Pull exitoso"
+for git_dir in $(find "$SOURCE_DIR" -name ".git" -maxdepth 4 -type d 2>/dev/null | sort); do
+    repo_dir="$(dirname "$git_dir")"
+    repo_name="$(basename "$repo_dir")"
     
-    # Sync a Cursor 2.5
-    if [ -x "$REPO_DIR/scripts/sync-to-cursor.sh" ]; then
-        "$REPO_DIR/scripts/sync-to-cursor.sh" 2>&1
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Cursor rules actualizadas"
-    fi
-else
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Pull falló (conflictos?)"
-fi
+    # Saltar ignorados
+    for ignore in "${IGNORE_REPOS[@]}"; do
+        [[ "$repo_name" == "$ignore" ]] && continue 2
+    done
+    
+    sync_repo "$repo_dir" "$repo_name"
+done
+
+echo "$NOW === Auto-Pull completo ==="
