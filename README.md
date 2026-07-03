@@ -32,11 +32,42 @@ git add -A && git commit -m "sync: actualizar skills desde agente"
 ./scripts/sync-to-cursor.sh
 ```
 
-### Hooks instalados
+### Hooks y auto-sync
 
 | Hook | Disparador | Acción |
 |------|-----------|--------|
 | `post-commit` | `git commit` | Push a GitHub + sync a Cursor 2.5 |
+| `post-merge` | `git pull` / `git merge` | Sync a Cursor 2.5 si hay cambios |
+
+**Auto-pull desde GitHub (cada 10 min):**
+Un `systemd --user timer` corre `scripts/auto-pull.sh` cada 10 minutos. Si detecta cambios remotos en GitHub, los trae con `git pull --ff-only` y regenera las reglas Cursor.
+
+```bash
+# Ver estado del timer
+systemctl --user status synapse-skills-pull.timer
+```
+
+### Ciclo completo de sincronización
+
+```
+Local: ~/.agents/skills/
+  │
+  ├── sync-from-agent.sh  ──>  synapse-skills/ (handoff)
+  │                                │
+  │                          git commit
+  │                                │
+  │                ┌── post-commit hook ──> Push a GitHub
+  │                │                         + sync a Cursor
+  │                │
+  │                └── post-merge hook  ──> Sync a Cursor tras merge
+  │
+  └── sync-to-cursor.sh  ──> ~/.cursor/rules/ (169 .mdc)
+        (manual o automático)
+
+GitHub (DarioLubisco/synapse-skills)
+  │
+  └── auto-pull (cada 10min) ──> git pull ──> sync a Cursor
+```
 
 ### Integración con Synapse OS
 
