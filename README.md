@@ -44,4 +44,3 @@ Este repo se integra con el ecosistema `.synapse` existente:
 - Los hooks de `.synapse` sincronizan con Notion (TASK-XXX)
 - Los hooks de `synapse-skills` sincronizan skills con GitHub y Cursor
 - Ambos coexisten en `~/source/` y se complementan
-# Sync test
