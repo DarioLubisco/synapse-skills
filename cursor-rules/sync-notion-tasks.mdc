@@ -1,0 +1,88 @@
+---
+description: "Comando para extraer, validar y crear en Notion las tareas discutidas en la conversación actual."
+alwaysApply: false
+---
+
+# sync-notion-tasks
+
+
+# Protocolo: Sincronización Manual de Tareas a Notion
+
+Cuando el usuario invoque esta skill (por ejemplo, escribiendo `/sync-notion-tasks` o pidiendo agregar las tareas discutidas a Notion), debes seguir **estrictamente** este flujo:
+
+## 1. Extracción y Recopilación
+- Revisa el contexto de la conversación reciente.
+- Extrae todas las ideas, requerimientos o acciones (tareas) que se hayan discutido y acordado, pero que aún no estén registradas en Notion.
+
+## 2. Aprobación Previa (Obligatoria)
+- Preséntale al usuario una lista clara de las tareas que encontraste, incluyendo el título sugerido y una breve descripción para cada una.
+- **Detente y espera** la aprobación explícita del usuario. Pregúntale: *"¿Estás de acuerdo con crear estas tareas en Notion o quieres modificar/eliminar alguna?"*
+
+## 3. Organización en Épicas y Sprints (Obligatoria)
+
+Antes de crear las tareas, consulta las Épicas y Sprints existentes en Notion para organizarlas:
+
+### 3a. Consultar Épicas existentes
+- Lee la base de datos de Épicas (ID: `381c22d5-8177-8159-a848-e2ece2dde69b`)
+- Obtén la lista de Épicas existentes con su ID y estado.
+
+### 3b. Consultar Sprints existentes
+- Lee la base de datos de Sprints (ID: `381c22d5-8177-813a-9613-d1fa2d06b676`)
+- Obtén la lista de Sprints existentes con su ID, fechas y estado.
+- Identifica el sprint activo (estado "In progress" o el más cercano a la fecha actual).
+
+### 3c. Proponer asignación
+Para CADA tarea, propón:
+- **Épica sugerida**: La épica existente que más se relaciona. Si ninguna encaja, sugiere crear una nueva.
+- **Sprint sugerido**: El sprint activo actual. Si no hay sprint activo, sugiere crear uno nuevo con periodo de 2 semanas desde hoy.
+
+Presenta la propuesta en tabla:
+
+```
+| # | Tarea | Épica sugerida | Sprint sugerido |
+```
+
+### 3d. Preguntar al usuario
+Pregunta: *"¿De acuerdo con esta organización? Si para alguna tarea prefieres no asignar Épica o Sprint, dime cuáles y las dejo sin asignar."*
+
+**Si el usuario rechaza una asignación**, deja esa tarea sin Épica y/o Sprint (queda "aislada"). Esto es válido — no toda tarea necesita pertenecer a una Épica o Sprint.
+
+**Si el usuario pide crear una Épica o Sprint nueva**, créala antes de asignar las tareas.
+
+## 4. Creación en Notion
+- Una vez que el usuario apruebe la lista Y la organización, procede a:
+  1. Crear las Épicas nuevas que se hayan acordado (si aplica).
+  2. Crear los Sprints nuevos que se hayan acordado (si aplica).
+  3. Crear las tareas en la base de datos de Tareas (ID: `381c22d5-8177-81fb-89ee-e34715f74d63`).
+  4. Vincular cada tarea a su Épica y Sprint aprobados usando las propiedades `Épica` (relation) y `Sprint` (relation).
+
+### Credenciales y API
+- **Token**: Usa la variable de entorno `NOTION_API_KEY` (configúrala en cada máquina; no hardcodees tokens en el repositorio).
+- **API**: Usa `curl` directo a `https://api.notion.com/v1/` con headers:
+  - `Authorization: Bearer {token}`
+  - `Notion-Version: 2022-06-28`
+  - `Content-Type: application/json`
+
+### Propiedades de las Tareas
+Al crear una tarea, incluye SIEMPRE:
+- `Name` (title) — Título descriptivo
+- `Estado` (status) — "Not started" por defecto
+- `Prioridad` (select) — Opciones: "🟢 Baja", "🟡 Media", "🟠 Alta", "🔴 Urgente"
+- `Tipo` (select) — Opciones: "✨ Feature", "🐛 Bug", "🔥 Hotfix", "⚙️ Chore", "🔨 Refactor"
+- `Épica` (relation) — ID de la Épica asignada (si aplica)
+- `Sprint` (relation) — ID del Sprint asignado (si aplica)
+
+### Propiedades de las Épicas
+- `Name` (title) — Nombre del proyecto/objetivo
+- `Estado` (status) — "Not started", "In progress", "Done"
+
+### Propiedades de los Sprints
+- `Name` (title) — Ej: "Sprint Jun 17-30"
+- `Estado` (status) — "Not started", "In progress", "Done"
+- `Fechas` (date) — Objeto con `start` y `end` en formato ISO
+
+## 5. Confirmación
+- Devuelve al usuario una confirmación con:
+  - Los enlaces a las nuevas tareas creadas
+  - Un resumen de la organización (qué tareas quedaron en qué Épica y Sprint)
+  - Cuántas tareas quedaron "aisladas" (sin Épica/Sprint), si hay alguna

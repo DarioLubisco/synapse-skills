@@ -1,0 +1,56 @@
+---
+description: "Optimización de Victory Charts para Dispositivos Móviles (React Web + Tailwind) con manejo de responsive containers, interacción táctil (Voronoi) y zoom."
+alwaysApply: false
+---
+
+# victory-mobile-charts
+
+
+# Skill: Optimización de Victory Charts para Dispositivos Móviles
+
+## 1. Contexto del Agente
+
+Cuando el usuario solicite la creación o refactorización de gráficos utilizando la librería "Victory" con un enfoque en soporte móvil (Mobile-First) o diseño responsivo, debes detenerte y aplicar estrictamente los siguientes criterios de arquitectura antes de generar código.
+
+NO asumas el entorno. Primero, identifica si el proyecto es React Web (con Tailwind) o React Native.
+
+## 2. Criterios de Programación (React Web + Tailwind)
+
+Si el entorno es web responsivo, aplica las siguientes reglas obligatorias:
+
+### A. Layout y Contenedores Flexibles (Evitar desbordamiento SVG)
+
+**Regla**: NUNCA uses anchos (width) o altos (height) fijos en píxeles rígidos en el contenedor padre de la gráfica sin controlar el desbordamiento.
+
+**Implementación**: Envuelve el componente `<VictoryChart>` dentro de un div controlado por Tailwind CSS usando clases fluidas.
+
+**Ejemplo de Spec**:
+```tsx
+<div className="w-full max-w-md mx-auto aspect-video sm:aspect-square">
+  {/* Victory por defecto usa viewBox de SVG, por lo que heredará el ancho del padre */}
+  <VictoryChart theme={VictoryTheme.material} domainPadding={20}>
+    {/* ... */}
+  </VictoryChart>
+</div>
+```
+
+### B. Interacción Táctil (Touch-Friendly)
+
+**Regla**: En dispositivos móviles, tocar un punto exacto en una gráfica de líneas o dispersión es difícil (el problema del "fat finger").
+
+**Implementación**: Sustituye el contenedor por defecto por `VictoryVoronoiContainer`. Esto crea áreas invisibles más amplias alrededor de los puntos de datos para atrapar los eventos táctiles (toques en la pantalla).
+
+**Ejemplo de Spec**:
+```tsx
+containerComponent={
+  <VictoryVoronoiContainer 
+    labels={({ datum }) => `${datum.x}: ${datum.y}`}
+  />
+}
+```
+
+### C. Legibilidad y Paginación de Datos
+
+**Regla**: Si hay más de 10 puntos de datos en el eje X, el gráfico se volverá ilegible en pantallas móviles.
+
+**Implementación**: Implementa `VictoryZoomContainer` para permitir el "Pan & Zoom" táctil (deslizamiento horizontal), fijando un `zoomDomain` inicial para que solo se vean los puntos más recientes o un bloque manejable.

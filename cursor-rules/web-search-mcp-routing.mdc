@@ -1,0 +1,109 @@
+---
+description: ">-"
+alwaysApply: true
+---
+
+# web-search-mcp-routing
+
+
+# Routing de búsqueda web (Exa / Tavily / Firecrawl)
+
+## Regla de oro
+
+**Una pregunta = un proveedor.** No llames Exa, Tavily y Firecrawl para la misma consulta.
+Si el primero no alcanza, escala al fallback indicado — no reinicies en paralelo.
+
+## Árbol de decisión
+
+```
+¿Tienes URL(s) concretas?
+├─ SÍ → ¿Necesitas JS renderizado / markdown limpio / tablas?
+│        ├─ SÍ → Firecrawl (`firecrawl_scrape`)
+│        └─ NO  → Tavily (`tavily_extract`) o Exa (`web_fetch_exa`)
+└─ NO  → ¿Qué tipo de búsqueda?
+         ├─ Noticias / "hoy" / "esta semana" / filtro temporal
+         │   → Tavily (`tavily_search` + `time_range`)
+         ├─ Investigación profunda multi-fuente
+         │   → Tavily (`tavily_research`)
+         ├─ Personas / empresas / LinkedIn / perfiles
+         │   → Exa (`web_search_exa` con `category:people` o `category:company`)
+         ├─ Query conceptual / papers / "encuentra artículos sobre X"
+         │   → Exa (`web_search_exa` con descripción semántica)
+         ├─ Mapear o crawlear un sitio entero
+         │   → Tavily (`tavily_map` / `tavily_crawl`) o Firecrawl (`firecrawl_crawl`)
+         └─ Búsqueda general rápida
+             → Tavily (`tavily_search`, depth: `fast`)
+```
+
+## Cuándo usar cada uno
+
+### Exa — `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`
+
+- Búsqueda **semántica** (describe la página ideal, no solo keywords)
+- Personas: `category:people [nombre] [rol]`
+- Empresas: `category:company [nombre empresa]`
+- Menos tokens: devuelve highlights relevantes
+- Segunda pasada: `web_fetch_exa` si los highlights no bastan
+
+**Ejemplo de query Exa:**
+```
+category:people director médico laboratorio farmacéutico Colombia
+```
+
+### Tavily — `mcp__tavily-mcp__tavily_*`
+
+- Noticias y hechos **recientes** (`time_range: day|week|month`)
+- Filtro por **país** (`country: "Colombia"`)
+- Filtro por **dominio** (`include_domains` / `exclude_domains`)
+- Investigación profunda: `tavily_research` (una sola llamada, varias fuentes)
+- Crawl/map de documentación: `tavily_crawl`, `tavily_map`
+- Extracción simple de URLs conocidas: `tavily_extract`
+
+**Parámetros útiles:**
+- `search_depth: "fast"` para consultas simples (ahorra créditos)
+- `search_depth: "advanced"` solo si `fast` no devolvió suficiente
+- `include_raw_content: true` cuando necesites el texto completo en la misma llamada
+
+### Firecrawl — `mcp__firecrawl-mcp__firecrawl_*`
+
+- Scrape de página con **JavaScript pesado**
+- Markdown limpio de una URL específica
+- Crawl con extracción estructurada (`firecrawl_extract` con schema)
+- Sitios con protección moderada (no anti-bot severo)
+
+**No usar Firecrawl para:** búsquedas genéricas sin URL — usa Exa o Tavily primero.
+
+## Cadena de fallback (solo si falla el primero)
+
+| Intento 1 | Si falla o es insuficiente |
+|-----------|---------------------------|
+| Tavily search | Exa search → Firecrawl scrape de mejor URL |
+| Exa search | `web_fetch_exa` en top URL → Tavily extract |
+| Firecrawl scrape | Tavily extract (`extract_depth: advanced`) |
+
+Máximo **2 proveedores** por pregunta. Nunca 3.
+
+## Casos del dominio farmacéutico
+
+| Tarea | Proveedor | Tool |
+|-------|-----------|------|
+| Precio/stock actual de producto | Tavily | `tavily_search` + `time_range: week` |
+| Regulación FDA/INVIMA reciente | Tavily | `tavily_search` o `tavily_research` |
+| Buscar laboratorio o ejecutivo | Exa | `web_search_exa` + `category:company/people` |
+| Scrapear ficha de producto (URL dada) | Firecrawl | `firecrawl_scrape` |
+| Prospecto / vademécum (URL conocida) | Firecrawl o Tavily | `firecrawl_scrape` / `tavily_extract` |
+| Sitios con anti-bot severo | Scrapling MCP | `scrape_url` (skill mcp-scraper) |
+
+## Anti-patrones (no hacer)
+
+- Llamar `tavily_search` + `web_search_exa` + `firecrawl_search` para la misma pregunta
+- Usar Firecrawl search cuando Tavily o Exa bastan (Firecrawl es más caro en créditos)
+- Usar `tavily_research` para preguntas simples de un dato puntual
+- Usar Exa para "¿qué pasó hoy?" sin filtro temporal (Tavily es mejor)
+- Reintentar el mismo proveedor más de 2 veces con la misma query
+
+## GLM / web_search_tool nativo
+
+Si el modelo es GLM y existe `web_search_tool` integrado de ZCode:
+- Úsalo para consultas **simples y rápidas** (un dato, una noticia)
+- Escala a MCP solo si necesitas filtros (dominio, fecha, crawl) o contenido completo

@@ -1,0 +1,105 @@
+---
+description: "Protocolo activo y mejores prácticas de alto nivel para el reporte y manejo de errores en n8n, garantizando notificaciones efectivas y previniendo falsos positivos."
+alwaysApply: false
+---
+
+# n8n
+
+
+# n8n Error Reporter Protocol
+
+Esta skill proporciona las pautas de alto nivel para la arquitectura y gestión del reporte de errores en los flujos de trabajo de n8n dentro del ecosistema de Synapse. El objetivo principal es asegurar que los errores críticos lleguen efectivamente a los administradores a través de los canales designados (como Telegram o Email) y, al mismo tiempo, mitigar la fatiga de alertas eliminando los falsos positivos.
+
+## Principios Fundamentales
+
+1. **Centralización del Manejo de Errores**
+   - Utilizar un **Flujo Global de Manejo de Errores** (Global Error Workflow) impulsado por el nodo `Error Trigger`.
+   - Evitar configurar notificaciones de error individuales en cada flujo. La delegación al flujo global asegura estandarización y mantenibilidad.
+
+2. **Cero Falsos Positivos (Alert Fatigue)**
+   - No todos los errores merecen una alerta inmediata. El flujo global debe implementar lógica para filtrar errores no accionables o esperados.
+   - **Reintentos Automáticos:** Para operaciones propensas a fallos transitorios (ej. llamadas a APIs externas, timeouts, rate limits), configurar el nodo para reintentar (Retry On Fail) *antes* de que el error sea definitivo y escale al flujo global.
+   - **Tolerancia a Fallos:** En pasos no críticos, utilizar la opción "Continue On Fail" para evitar que el flujo falle por completo si ese paso no compromete el resultado final.
+
+3. **Manejo Local vs Global**
+   - Si un error requiere lógica de recuperación local (fallback), utilizar el nodo o patrón `Try/Catch` (por ejemplo, sub-flujos o condicionales que validan el output).
+   - Si un error requiere intervención humana o detiene el proceso lógico de negocio, debe escalar al `Error Trigger` global.
+
+## Mejores Prácticas para el Flujo de Manejo de Errores Global
+
+Cuando diseñes o mantengas el flujo de Errores Global, asegúrate de implementar lo siguiente:
+
+- **Estructura e Identidad de Errores (Entity-Based Logging):**
+  Evitar mensajes de error vagos y genéricos (ej. "The service refused the connection"). Todos los errores generados en flujos de monitorización deben atraparse localmente (`Continue On Fail` + `If` + `Stop And Error`) para emitir una **estructura pre-constituida basada en entidades** que aclare identidades de Primer y Segundo grado. La alerta debe contener:
+  - **Nivel de Gravedad:** Crítico (1er Grado - ej. BD, DNS) o Advertencia (2do Grado - ej. APIs internas, procesos dependientes).
+  - **Entidad Origen:** Máquina e IP que ejecuta el chequeo (ej. `Servidor Debian Webservices (IP: 10.147.18.204)`).
+  - **Entidad Destino:** Máquina e IP objetivo (ej. `Servidor Desktop Dario Windows (IP: 10.200.8.114)`).
+  - **Servicio Afectado:** Qué protocolo o microservicio específico falló.
+  - **Causas Probables:** Diagnóstico inferido para agilizar la resolución.
+  - **Log Nativo y Actionable Links:** El error técnico capturado por n8n (`$json.error.message`) y el enlace directo a la ejecución (`Execution URL`).
+
+  *Ejemplo de Estructura de Plantilla (Inyectada vía Stop and Error):*
+  ```text
+  🚨 CRÍTICO (Primer Grado): Pérdida de Servicio Central
+  🖥️ Entidad Origen: Servidor Debian Webservices (IP ZeroTier: 10.147.18.204)
+  🎯 Entidad Destino: Servidor Windows SRV-DC-AMC (IP LAN: 10.200.8.5)
+  🔌 Servicio Afectado: MSSQL Server (Instancia: Saint)
+  
+  📝 Diagnóstico: El nodo no pudo validar la consulta de latencia.
+  🔍 Causas Probables: El túnel ZeroTier está caído o el servicio se detuvo.
+  🛠️ Log Nativo (n8n): {{ $json.error.message }}
+  ```
+
+- **Fallback para Errores No Estructurados (Errores Nativos/No Capturados):**
+  Para flujos que no inyectan una estructura pre-constituida basada en entidades (por ejemplo, errores de sintaxis, fallos de red inesperados o excepciones de SQL), el nodo de formateo central (`Format Alert Data`) en el flujo global debe implementar una lógica que valide y envuelva el error nativo en una estructura amigable y descriptiva. Esto previene el envío de mensajes mudos o excesivamente técnicos a Telegram sin contexto sobre qué flujo u operación falló.
+
+  *Expresión Estándar para `alert_body` en `Format Alert Data`:*
+  ```javascript
+  {{ 
+    (() => {
+      const rawError = $json.execution?.error?.messages?.[0] || $json.trigger?.error?.messages?.[0] || $json.error?.messages?.[0] || $json.execution?.error?.message || $json.trigger?.error?.message || $json.error?.message || "⚠️ ERROR DESCONOCIDO";
+      if (rawError.includes("Servicio Afectado") || rawError.includes("Entidad Origen")) {
+        return rawError;
+      }
+      const wfName = $json.workflow?.name || "Desconocido";
+      const nodeName = $json.execution?.lastNodeExecuted || "Desconocido";
+      const execId = $json.execution?.id || "N/A";
+      const errorMsg = $json.execution?.error?.message || $json.execution?.error?.description || $json.error?.message || "Sin mensaje específico";
+      return `🚨 <b>FALLO EN FLUJO DE TRABAJO</b>\n\n📋 <b>Flujo:</b> ${wfName}\n⚙️ <b>Nodo:</b> ${nodeName}\n🆔 <b>Ejecución:</b> #${execId}\n\n❌ <b>Error:</b> <code>${errorMsg}</code>`;
+    })()
+  }}
+  ```
+
+- **Filtrado Dinámico:**
+  - Implementar un nodo `Switch` o `If` justo después del `Error Trigger` para descartar:
+    - Errores generados en entornos de desarrollo/pruebas.
+    - Códigos de error específicos que son conocidos y están programados para ser ignorados.
+
+- **Enrutamiento por Canal:**
+  - Enviar notificaciones de infraestructura crítica al **Bot de Notificación de Errores** oficial (documentado en `synapse_credentials.md`).
+  - **REGLA DE SESIÓN:** Si la alerta incluye botones interactivos (ej. Mute), el bot que envía la notificación **DEBE** ser el mismo que el bot configurado en el `Mute Handler`. De lo contrario, los callbacks no funcionarán.
+
+- **Manejo de Silencio (Mute Logic):**
+  - Todas las alertas críticas deben ofrecer opciones de silencio (1h, 4h, 12h) y una opción de "Reactivar/Desilenciar".
+  - El estado de silencio debe centralizarse en una `DataTable` de n8n para que sea consultable por cualquier flujo de la organización.
+  - Para retrocompatibilidad con scripts locales (PowerShell), el flujo de errores debe actualizar también los archivos de estado locales (`mute.txt`) mediante comandos SSH si aplica.
+
+## ⚖️ Protocolo de Prioridad de Herramientas
+
+**REGLA DE ORO:** El uso del **MCP (`n8n-arquitectura` o `n8n-mcp`)** es la vía MANDATORIA y PRIORITARIA para cualquier interacción con n8n.
+
+1.  **Prioridad 1: MCP (`n8n-arquitectura`)**: Debe usarse para crear, actualizar, buscar y consultar detalles de flujos. Es el método más estable y seguro para mantener la integridad del código del flujo.
+2.  **Prioridad 2: MCP (`n8n-mcp`)**: Alternativa secundaria si el anterior presenta problemas de conectividad.
+3.  **Prioridad 3: Browser Subagent (ÚLTIMO RECURSO)**: Solo debe usarse para tareas que el MCP no puede realizar técnicamente (como asignar etiquetas/tags o configurar el Error Workflow global en la interfaz visual) O si el usuario lo solicita explícitamente tras fallar los métodos anteriores.
+
+> [!IMPORTANT]
+> Nunca uses el navegador para editar la lógica de un flujo si el MCP está disponible. El MCP garantiza que el código generado siga los estándares del SDK y evita errores de manipulación visual.
+
+### ⚠️ Regla Estricta contra Flujos "Fantasma" (Corrupción de UI)
+
+Cuando crees o modifiques flujos de trabajo a través del código JSON/SDK o mediante el MCP, es crítico evitar generar **"Flujos Fantasma"**. Un flujo fantasma es aquel que el backend de n8n guarda y ejecuta sin errores, pero que el frontend (lienzo visual) es incapaz de renderizar, dejando la pantalla en blanco o corrupta.
+
+Esto ocurre por dos razones principales:
+
+1. **Parámetros de Nodo Inventados o Incompletos (Crash de Interfaz):**
+   - El frontend de n8n espera estructuras exactas en los parámetros de cada nodo (ej. el nodo FTP requiere `"operation"`

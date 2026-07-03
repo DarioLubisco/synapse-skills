@@ -1,0 +1,219 @@
+---
+description: "Expert guidelines for generating resilient, parser-safe Mermaid diagrams compatible with all browser environments and markdown viewers."
+alwaysApply: false
+---
+
+# mermaid-pro
+
+
+# Mermaid Pro: Robust Diagramming Practices
+
+As an expert in diagram generation, your goal is to create Mermaid schemas that are robust, error-free, and universally compatible across different markdown parsers, browser extensions, and built-in IDE previewers.
+
+Many Mermaid parsers are extremely sensitive to whitespace and inline shorthand. You MUST follow these best practices to guarantee diagram stability.
+
+## 1. Disable HTML Labels (The "Magic Bullet" for Strict Parsers)
+
+By default, Mermaid attempts to parse node text as HTML labels, which often causes catastrophic rendering failures when text contains complex characters, quotes, or line breaks (`\n`). You MUST disable HTML labels globally using an initialization directive at the very top of your diagram.
+
+**✅ GOOD:**
+
+```mermaid
+%%{init: { "flowchart": { "htmlLabels": false } }}%%
+flowchart TD
+    A["Line 1 \n Line 2"]
+```
+
+## 2. Avoid Inline Styling Shorthands
+
+The most common cause of parse errors is the inline styling shorthand (`:::className`). 
+
+**❌ BAD (Prone to parse errors):**
+
+```mermaid
+flowchart TD
+    Start([Start Process]) ::: myStyle
+```
+
+**✅ GOOD (Decoupled styling):**
+
+Always declare styles using `classDef` and apply them at the **end** of the flowchart using the `class` keyword.
+
+```mermaid
+flowchart TD
+    %% Nodes
+    Start([Start Process])
+    End([End Process])
+
+    %% Styling Definitions
+    classDef processStyle fill:#e1f5fe,stroke:#01579b,stroke-width:1px;
+
+    %% Applying Classes
+    class Start,End processStyle
+```
+
+## 3. Quoting Node Text, Subgraphs, and Edge Connectors
+
+Any text containing special characters, spaces, slashes (`/`), colons (`:`), or parentheses MUST be enclosed in double quotes. This applies strictly to:
+1. **Node Text**: e.g., `A["Update DB (User Table)"]`
+2. **Subgraph Titles**: e.g., `subgraph "Fase 1: Extracción y Limpieza"`
+3. **Edge/Connector Labels**: e.g., `A -- "Fallo de Red o 429" --> B`
+
+Failure to quote edge connectors with spaces or slashes is a leading cause of parse errors.
+
+**❌ BAD (Unquoted text):**
+
+```mermaid
+flowchart TD
+    A[Update DB (User Table)] --> B[Trigger Event-A]
+```
+
+**❌ BAD (Spaces inside the bracket and quote):**
+Some strict visualizers will fail if there are spaces between the bracket and the quote.
+```mermaid
+flowchart TD
+    A([ "Start" ])
+```
+
+**✅ GOOD:**
+
+Always use double quotes inside the shape brackets if there are any non-alphanumeric characters, and **never put spaces between the bracket and the quote**.
+
+```mermaid
+flowchart TD
+    A["Update DB (User Table)"] --> B["Trigger Event-A"]
+    C(["Start"])
+```
+
+## 3. No HTML Tags in Node Labels
+
+Many markdown-to-Mermaid renderers sanitize or fail on raw HTML.
+Use native Mermaid newline characters (`\n`) instead of `<br>` or `<p>`.
+
+**❌ BAD:**
+
+```mermaid
+flowchart TD
+    A["Line 1 <br> Line 2"]
+```
+
+**✅ GOOD:**
+
+```mermaid
+flowchart TD
+    A["Line 1 \n Line 2"]
+```
+
+## 4. Entity-Relationship (ER) Diagrams
+
+When creating `erDiagram`s, follow these rules:
+
+- **Order**: Define Entities `{ ... }` first, then Relationships `||--||` second.
+- **Mandatory Labels**: In many Mermaid versions, every relationship MUST have a label. Ensure every relationship line ends with `: "label text"`. Failure to do this will cause an `Expecting COLON` error.
+- **Zero Indentation**: Always start the diagram type and relationship lines at the very beginning of the line (zero indentation).
+- Ensure spaces around relationships (e.g., `||--o{`).
+- Keep attribute definitions strictly on one line per attribute.
+- **CRITICAL**: Always end the code block with a blank line after the last diagram element.
+
+**✅ GOOD:**
+
+```mermaid
+erDiagram
+A {
+    string ID
+}
+A ||--o{ B : "has"
+A ||--o{ C : "links"
+
+```
+
+## 5. Whitespace and Code Block Isolation (The Double Newline Rule)
+
+Many markdown renderers accidentally "bleed" the closing backticks (```) or the following markdown headers into the Mermaid parser. To prevent this:
+
+- **ALWAYS** leave at least TWO empty lines BEFORE and AFTER the entire ` ```mermaid ` block.
+- **ALWAYS** ensure the last character of the Mermaid code is a newline, followed by one more empty line *inside* the code block.
+
+**❌ BAD (Causes "got '`'" error):**
+
+```mermaid
+erDiagram
+    A {
+    }```
+
+**✅ GOOD:**
+
+```mermaid
+erDiagram
+    A {
+    }
+
+
+```
+
+## 6. Sequence Diagrams
+
+For sequence diagrams, always use `autonumber` (optional but recommended for clarity) and explicitly define actors/participants before using them.
+
+**✅ GOOD:**
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as API
+    
+    U->>A: Request Data
+    A-->>U: Return JSON
+```
+
+## 7. Compatibility with Standalone Tools (Markdown vs Raw)
+
+Many official tools, including the **Mermaid Live Editor**, expect ONLY the Mermaid diagram code. They will fail if provided with an entire Markdown file containing headers, SQL, or other text.
+
+- **For Documentation**: Use fenced blocks (```mermaid) inside `.md` files.
+- **For External Tools**: Always provide a "Clean Export" or a standalone `.mmd` file containing only the raw Mermaid logic.
+- **Troubleshooting**: If you see `No diagram type detected...`, it is likely because the parser is receiving markdown headers or non-mermaid text.
+
+## 8. Semantic Color Coding for Flowcharts
+
+To ensure diagrams are visually intuitive and consistent across workflows, ALWAYS apply standard semantic color coding to nodes based on their nature.
+
+> [!WARNING]
+> Many markdown viewers, IDE previewers, and sanitizers strip out `<style>` sheets or ignore `classDef`/`class` declarations. To guarantee that colors are rendered correctly in all environments, ALWAYS use explicit, inline `style` declarations for each node at the bottom of the flowchart. Do NOT use `classDef` or `class`.
+
+**Standard Color Palette Guidelines (Mermaid Live Editor Compatible Pastels):**
+- **Start/End Nodes**: `fill:#E8F5E9,stroke:#81C784,color:#2E7D32,stroke-width:2px`
+- **Warnings / Errors / Exceptions / Fallbacks**: `fill:#FFF3E0,stroke:#FFB74D,color:#E65100,stroke-width:2px`
+- **Core Processes / Standard Actions**: `fill:#E3F2FD,stroke:#64B5F6,color:#1565C0,stroke-width:2px`
+- **Important Validations / Business Rules**: `fill:#F3E5F5,stroke:#BA68C8,color:#6A1B9A,stroke-width:2px`
+- **Databases / Storage / External Systems**: `fill:#ECEFF1,stroke:#90A4AE,color:#37474F,stroke-width:2px`
+
+> [!IMPORTANT]
+> Do NOT include comments (`%%`) or blank lines interspersed within or around your `style` declarations at the end of the file. Group all `style` declarations together tightly. Adding comments or whitespace between styles causes parser failures in Mermaid Live Editor.
+
+**Example:**
+```mermaid
+flowchart TD
+    StartNode(["Start"]) --> ActionNode["Process"]
+    ActionNode --> ErrorNode{"Error?"}
+    ErrorNode -- "Yes" --> EndNode(["End"])
+
+    style StartNode fill:#E8F5E9,stroke:#81C784,color:#2E7D32,stroke-width:2px
+    style EndNode fill:#E8F5E9,stroke:#81C784,color:#2E7D32,stroke-width:2px
+    style ActionNode fill:#E3F2FD,stroke:#64B5F6,color:#1565C0,stroke-width:2px
+    style ErrorNode fill:#FFF3E0,stroke:#FFB74D,color:#E65100,stroke-width:2px
+```
+
+## 9. Enforcement Checklist
+
+1. **Did I include `%%{init: { "flowchart": { "htmlLabels": false } }}%%` at the very top?**
+2. **Did I use `flowchart TD` instead of `graph TD`?**
+3. Did I remove all `:::` inline styles and use explicit `style NodeID fill:#...` declarations at the bottom?
+4. Are all node labels, subgraph titles, and edge connectors with spaces or special characters enclosed in `" "` quotes?
+5. Are all line breaks using `\n` instead of HTML?
+6. **Do all ER relationships have mandatory labels (e.g., `: "label")?**
+7. **Are there blank lines before/after the code block?**
+8. **Is the Mermaid code block clean of any indentation?**
+9. **Is there a standalone `.mmd` version if using external/official tools?**
+10. **¿He proporcionado el enlace al artefacto para su renderizado inmediato en la interfaz?**
+11. **Did I apply sem

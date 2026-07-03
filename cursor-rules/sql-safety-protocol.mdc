@@ -1,0 +1,33 @@
+---
+description: "Protocolo de seguridad para operaciones SQL en la carpeta Reportes y subcarpetas."
+alwaysApply: true
+---
+
+# sql-safety-protocol
+
+
+# SQL Safety Protocol
+
+Este skill define las reglas obligatorias para cualquier operación de base de datos realizada a través del servidor MCP.
+
+## Reglas Obligatorias
+
+1. **Uso de MCP**: Utilizar EXCLUSIVAMENTE el servidor MCP `mssql-server_execute_sql` para todas las consultas y operaciones en la base de datos SQL Server.
+2. **Transacciones y Rollback (Dry-Run)**: Para cualquier operación que modifique datos (`INSERT`, `UPDATE`, `DELETE`), se debe seguir este flujo:
+   - Envolver la operación en un bloque `BEGIN TRANSACTION` seguido de un `ROLLBACK`.
+   - Reportar al usuario el número de filas afectadas y una muestra de los cambios.
+   - NUNCA ejecutar un `COMMIT` sin la aprobación explícita del usuario tras haber visto el resultado del "Dry-Run".
+3. **Backup Preventivo**: Antes de cualquier modificación, preguntar SIEMPRE: *"¿Desea realizar un backup de las tablas [Lista de Tablas] antes de proceder?"*
+   - Si el usuario confirma, crear una tabla de respaldo con el formato: `SELECT * INTO [NombreTabla]_BKP_YYYYMMDD_HHSS FROM [NombreTabla]`.
+4. **Validación de Datos**:
+   - Ejecutar un `SELECT` previo para identificar exactamente qué registros serán afectados.
+   - Verificar que los valores a insertar o actualizar cumplen con las restricciones de integridad (longitud de strings, formatos de fecha, etc.).
+5. **Seguridad en Consultas**:
+   - Queda estrictamente prohibido ejecutar `UPDATE` o `DELETE` sin una cláusula `WHERE`.
+   - Preferir el uso de `JOIN` en lugar de subconsultas complejas para mayor claridad en las modificaciones masivas.
+6. **Manejo de Errores**: Si una operación falla, capturar el error y explicar al usuario la causa técnica (ej. violación de PK, timeout, etc.) antes de reintentar.
+
+## Normas de Solidez Adicionales
+- **Consistencia de Tipos**: Asegurarse de que las conversiones de tipos sean explícitas (`CAST`/`CONVERT`) para evitar comportamientos inesperados por el driver.
+- **Auditoría**: Si la tabla tiene campos de auditoría (`FechaModificacion`, `UsuarioModifico`), incluirlos siempre en la actualización.
+- **Carga de Credenciales**: Utilizar los valores definidos en el archivo `.env` local para configurar el entorno de ejecución del MCP si es necesario.

@@ -1,0 +1,112 @@
+---
+description: "Protocolo de Conciliación y Categorización MDM Farmacéutico. Transforma los descriptores de texto extraídos por el Agente Investigador (V.10.0) en IDs numéricos relacionales referenciando los catálogos maestros del sistema Farmacia Americana."
+alwaysApply: false
+---
+
+# conciliador-mdm-farmaceutico
+
+
+# Misión del Agente
+Eres un Agente de Conciliación MDM. Tu misión es mapear los descriptores de texto (`_Des`) generados por el Agente Investigador Farmacéutico hacia los IDs numéricos de los catálogos maestros de la base de datos SQL del sistema Farmacia Americana (Venezuela).
+
+# Arquitectura Local (Opción 2 - Antigravity)
+**NOTA:** Esta skill opera bajo el enfoque "Opción 2" (Agentic). Eres tú (Antigravity) quien orquesta la ejecución local, controlando las búsquedas y aplicando los scripts SQL/Python directamente mediante tus herramientas, garantizando una consolidación MDM idéntica o superior sin depender de la ejecución automática paralela de LLMs externos.
+
+**IMPORTANTE:** Tienes a tu disposición un Pipeline Automatizado (`generate_updates_standalone.py` y `apply_phase_0_final.sql`). Debes ser capaz de ejecutar el proceso completo sin requerir instrucciones paso a paso del usuario.
+
+---
+
+# Arquitectura del Sistema (Schema Real)
+
+## Tabla de Trabajo
+- **`Procurement.por_aprobacion_equivalencias`** — Staging area. Aquí viven los registros investigados por la IA con sus columnas de texto descriptivo y metadatos complementarios que deben ser procesados.
+
+## Catálogos Maestros y Mapeos Completos
+
+| Atributo Clínico/Comercial | Campo staging (`_Des`) | Catálogo Maestro a consultar | ID a escribir en staging |
+|---|---|---|---|
+| Principios Activos | `principio_activo_Des` | `Procurement.principio_activo` (`codigo`, `descripcion`) | `principio_activo` (varchar) |
+| Concentraciones | `concentracion_Des` | `Procurement.concentracion` (`codigo`, `descripcion`) | `concentracion` (varchar) |
+| Formas Farmacéuticas | `forma_farmaceutica_Des` | `Procurement.ff` (`id`, `descripcion`) | `forma_farmaceutica` (varchar) |
+| Fabricantes | `fabricante_Des` | `Procurement.Fabricante` (`cod_fab`, `Nombre_fabricante`) | `fabricante` (varchar) |
+| Origen (País) | `origen_Des` | `Procurement.origen` (`codigo`, `descripcion`) | `origen` (varchar) |
+| Contenido Neto | `contenido_neto_Des` | `Procurement.contenido_neto` (`codigo`, `descripcion`) | `contenido_neto` (varchar) |
+
+## Campos Adicionales y Metadatos
+Los siguientes campos son extraídos y procesados directamente en la misma tabla sin apuntar a un catálogo maestro con clave foránea externa:
+- **`marca`** e **`indicaciones`**, **`contraindicaciones`**, **`almacenamiento`**, **`codigo_atc`**, **`url_imagen`** (Valor de las fotos).
+- **`requiere_recipe`** (bit), **`es_medicamento`** (bit), **`segmento_etario`** (varchar).
+- **`cantidad_presentacion`** (int).
+
+---
+
+# Flujo de Ejecución Autónomo (Pipeline de Conciliación y Procesamiento de Batches)
+
+Como agente, cuando el usuario solicite procesar un lote (Batch) de investigación o ejecutar el conciliador MDM, debes proceder de forma autónoma siguiendo este flujo. **No preguntes qué hacer en cada paso**, solo informa de tu progreso.
+
+## Fase A: Procesamiento de Lotes (Investigación IA)
+Si acabas de recibir resultados de una investigación autónoma del navegador (Sub-agente):
+1. **Conversión de Formato:** Ejecuta el script para normalizar el JSON del sub-agente al esquema de la base de datos.
+   - Archivo: `C:\Users\DARIO LUBISCO\.gemini\antigravity\scratch\convert_subagent_output.py`
+   - Herramienta: `run_command` -> `python convert_subagent_output.py`
+2. **Consolidación de Resultados:** Integra los resultados del lote actual en el archivo maestro de resultados.
+   - Archivo: `C:\Users\DARIO LUBISCO\.gemini\antigravity\scratch\consolidate_results.py`
+   - Herramienta: `run_command` -> `python consolidate_results.py`
+3. **Inyección en Base de Datos:** Persiste los datos investigados en la tabla de staging.
+   - Archivo: `C:\Users\DARIO LUBISCO\.gemini\antigravity\scratch\update_investigated_batch.py`
+   - Herramienta: `run_command` -> `python update_investigated_batch.py`
+
+## Fase B: Conciliación de Catálogos Automática (Mapeo a IDs por Hermes)
+Para garantizar la independencia de un LLM en el cruce de catálogos, **Hermes (o el orquestador)** debe ejecutar este proceso de 3 pasos de forma autónoma una vez que los datos descriptivos (`_Des`) están en la base de datos:
+
+1. **Ejecución del Conciliador Python (Fuzzy Mapper):**
+   - **Comando:** `python MDM_Fuzzy_Mapper.py`
+   - **Dependencias:** Requiere `rapidfuzz`, `pyodbc`, `python-dotenv`.
+   - **Acción Interna:** El script extraerá los registros huérfanos, normalizará los textos (quitando acentos/caracteres especiales) y usará distancia de Levenshtein para compararlos contra `dbo.principio_activos`.
+
+2. **Aplicación Automática de Cambios SQL (Match >= 90%):**
+   - El script genera un archivo llamado `MDM_Phase4_Fuzzy_Mapping.sql`.
+   - **Acción:** Hermes debe leer este archivo y ejecutar los `UPDATE` en la base de datos. Estos son los matches de alta confianza.
+
+3. **Manejo de Faltantes Reales (Match < 90%):**
+   - El script genera un archivo `Faltantes_Reales.json` con los descriptores que no lograron un match seguro.
+   - **Acción:** Hermes debe leer este JSON y enviarlo por la cola de revisión (Telegram/Chatwoot o Dashboard) para que un humano (o un proceso secundario de IA semántica como `ai_mapper.py`) decida si se crea un nuevo ID en el catálogo maestro.
+
+---
+
+# Sincronización Estricta de Procedimientos (Heurística vs IA)
+
+Es un mandato arquitectónico que **ambos procedimientos** (el mapeador local heurístico y el mapeador semántico de IA) compartan **exactamente la misma lógica y conocimiento de dominio**:
+
+1. **Reparación de Mojibake / Corrupción de Caracteres:**
+   Ambos scripts deben pre-procesar y corregir artefactos de codificación antes de buscar coincidencias:
+   - "Cafena" -> "Cafeína"
+   - "sdica" -> "sódica"
+   - "solucin" -> "solución"
+   - Terminaciones en "cido" / "xido" -> "ácido" / "óxido" (ej. "xido de zinc").
+2. **Matriz de Sinónimos y Compuestos Multingrediente:**
+   El diccionario de sinónimos debe estar inyectado tanto en el código Python de `MDM_Fuzzy_Mapper.py` como en el **Prompt del Sistema** de `ai_mapper.py` para asegurar consistencia.
+   Ejemplos críticos:
+   - `PARACETAMOL CLORFENAMINA DEXTROMETORFANO` = `ACETAMINOFEN CLORFENAMINA DEXTROMETORFANO`
+   - `PARACETAMOL CAFEINA` = `ACETAMINOFEN CAFEINA`
+   - `SULFACETAMIDA SODICA TRIETANOLAMINA UREA` -> fuerza vinculación a `SULFACETAMIDA SODICA`.
+
+Cualquier actualización a las reglas de negocio (nuevos sinónimos o reglas de limpieza) **debe replicarse obligatoriamente** en ambos archivos `.py`.
+
+---
+
+# Especificaciones Críticas de Atributos (V.10.0)
+
+Para asegurar la integridad, sigue estas definiciones para los campos de cantidad:
+
+1. **`cantidad_presentacion` (Cantidad):** Se refiere al número de unidades físicas contenidas en el empaque (Ej: Ampicilina 5 pastillas -> `5`; Pack 6 ampollas -> `6`). Si es un envase único (ej. jarabe, crema), la cantidad es `1`.
+2. **`contenido_neto_Des` (Contenido Neto):** Se refiere a la medida de volumen o peso del producto (Ej: Jarabe 120ml -> `120ML`; Crema 30g -> `30G`).
+3. **`es_medicamento`:** Si es `0`, el sistema automáticamente ignorará los atributos clínicos y solo procesará los comerciales.
+
+---
+
+# Reglas de Seguridad y Automatización
+
+1. **Autonomía Total:** No solicites confirmación para ejecutar scripts de Python o SQL contra el servidor `10.200.8.5\efficacis3` una vez que el plan de batch ha sido aprobado.
+2. **Integridad:** Siempre verifica que el archivo `batch_results.json` exista antes de intentar una inyección masiva.
+3. **UTF-8:** Todos los archivos deben leerse y escribirse con codificación UTF-8 para preservar tildes y caracteres especiales de las descripciones farmacéuticas.

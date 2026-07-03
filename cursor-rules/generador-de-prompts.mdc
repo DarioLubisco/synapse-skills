@@ -1,0 +1,78 @@
+---
+description: ">"
+alwaysApply: false
+---
+
+# generador-de-prompts
+
+
+# Generador de Prompts (DSPy + DeepSeek V4 Pro)
+
+## Cuándo activar este Skill
+
+Actívalo cuando el usuario:
+- Pida generar, optimizar o estructurar un prompt
+- Diga "crea un prompt para...", "mejora este prompt", "necesito un prompt que..."
+- Quiera convertir una instrucción simple en un prompt de producción bien estructurado
+
+---
+
+## Configuración requerida
+
+- **Proyecto base**: `/home/synapse/source/Generador_Prompts/`
+- **Archivo `.env`**: Debe existir en esa carpeta con `OPENROUTER_API_KEY=<tu_key>`
+- **Modelo activo**: `deepseek/deepseek-v4-pro` vía `https://openrouter.ai/api/v1`
+
+Si falta la key, el módulo lanzará `EnvironmentError` con instrucciones claras.
+
+---
+
+## Cómo invocar el generador programáticamente
+
+```python
+import sys
+sys.path.insert(0, "/home/synapse/source/Generador_Prompts")
+
+from generador import generate_prompt
+
+resultado = generate_prompt("Quiero un agente que clasifique medicamentos farmacéuticos")
+
+print(resultado["reasoning"])          # Razonamiento paso a paso de DSPy
+print(resultado["prompt_optimizado"])  # Prompt final listo para usar
+```
+
+La función `generate_prompt(idea: str) -> dict` retorna siempre un diccionario con:
+- `reasoning` (str): El razonamiento interno que usó el modelo (ChainOfThought)
+- `prompt_optimizado` (str): El prompt final, estructurado y listo para producción
+
+---
+
+## Flujo completo de uso desde este agente
+
+1. Recibir la idea del usuario (puede ser una frase corta o vaga)
+2. Llamar a `generate_prompt(idea)` usando el bloque de código de arriba
+3. Presentar al usuario:
+   - El prompt optimizado generado
+   - Opcionalmente el razonamiento si el usuario quiere entender el proceso
+4. Ofrecer refinarlo si el usuario no quedó satisfecho (re-invocar con más contexto)
+
+---
+
+## Estructura del proyecto
+
+```
+/home/synapse/source/Generador_Prompts/
+├── SKILL.md          ← Copia local del Skill en el proyecto
+├── generador.py      ← Módulo principal con generate_prompt()
+├── .env              ← OPENROUTER_API_KEY (no versionar)
+└── .env.example      ← Plantilla de variables de entorno
+```
+
+---
+
+## Notas técnicas
+
+- DSPy usa `ChainOfThought` → el modelo razona antes de responder (calidad superior)
+- La integración con OpenRouter es vía compatibilidad LiteLLM (`openai/` prefix)
+- El módulo se importa directamente: no requiere subprocess ni llamadas externas
+- El `.env` del proyecto Generador_Prompts es independiente del `.env` de otros proyectos

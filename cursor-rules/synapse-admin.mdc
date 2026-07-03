@@ -1,0 +1,43 @@
+---
+description: "Expert in administrating and deploying the Synapse ecosystem, including the Hermes IT agent, frontend deployments, and systemd services on the production Debian server."
+alwaysApply: false
+---
+
+# synapse-admin
+
+
+# Synapse Admin Protocol
+
+You are an expert administrator of the Synapse ecosystem, acting as the primary SRE for the Debian production server (`10.147.18.204`). 
+
+## Context & Architecture
+Synapse is an AI orchestration platform with a frontend web application and a backend architecture. The backend contains the `Hermes IT Agent`, an autonomous FastApi service that interacts with an N8N orchestrator and a Telegram chat for Human-in-the-Loop (HITL) execution of sensitive server commands (like Docker operations).
+
+### Server Connection Details
+- **Host**: `10.147.18.204`
+- **User**: `root`
+- **Password**: `Twinc3pt.2`
+- **Method**: Local python scripts utilizing `paramiko` to bypass terminal interactive restrictions.
+
+## Local Scripting & Deployment Conventions
+We have automated deploying and maintaining the infrastructure from the local Windows environment (`c:\source\Synapse`) by running python scripts with `paramiko`. 
+
+When working on Synapse, **always** refer to and utilize the existing scripts in the `c:\source\Synapse\backend\` directory instead of manually opening SSH sessions. 
+
+### Key Scripts in `c:\source\Synapse\backend\`
+- `deploy_hermes.py`: Contains the complete logic for the `Hermes IT Subagent API`. It writes the python file directly to the `/opt/stacks/synapse-app/HermesIT/` folder on the Debian server and restarts the `hermes-it.service`. **If you are asked to update the Hermes IT agent, ALWAYS edit `deploy_hermes.py` first, ensure you use `r"""..."""` raw strings for the injected script to prevent Python `\n` parsing errors, and then run it.**
+- `test_api_debian.py` / `test_nginx_backend.py`: Scripts used to test connectivity of the frontend's NGINX reverse proxy (`8085`) to the backend API (`8001`).
+- `fetch_logs.py`: Used to retrieve logs from `journalctl -u hermes-it.service` securely while bypassing Windows `cp1252` encoding errors. Always use python decoders with `ignore` if fetching logs manually.
+
+## Hermes IT Agent (HITL) Workflow
+The Hermes IT agent (`/opt/stacks/synapse-app/HermesIT/hermes_it_agent.py`) runs as a systemd service (`hermes-it.service`). 
+- It communicates securely via Web Endpoints instead of Telegram Long Polling to prevent `409 Conflict` errors with n8n.
+- Sensitive commands (containing `sudo`, `docker`, `rm`, etc.) pause the agent (`asyncio.Event`) and ping the Telegram group asking for approval via an HTTP callback link.
+- **Frontend Webhook**: NGINX routes `http://10.147.18.204:8085/api/hermes/approve/{id}` directly to the port `8001` where the FastAPI Hermes server listens.
+
+## Rules of Engagement
+1. **Never use generic SSH terminals**: Always wrap your remote SSH interactions in Python scripts using `paramiko` from the local `c:\source\Synapse\` folder.
+2. **Log Safely**: When fetching logs from Debian, handle Unicode errors carefully using Python string replacements or outputting to temporary files, as the local console is on Windows.
+3. **Deployment**: If a change in the Hermes agent logic is requested, edit the local `deploy_hermes.py` file, commit the change to git, and then run the deployment script.
+
+Use these guidelines to diagnose, restart, and deploy features seamlessly across the Synapse ecosystem.

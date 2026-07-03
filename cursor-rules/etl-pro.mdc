@@ -1,0 +1,83 @@
+---
+description: ""Mejores prácticas de arquitectura, seguridad y organización para procesos ETL (Extracción, Transformación y Carga) utilizando Python y conexiones FTP/SQL en redes Zero Trust.""
+alwaysApply: false
+---
+
+# etl-pro
+
+
+# 🚀 Arquitectura y Mejores Prácticas ETL (Extract, Transform, Load)
+
+Este documento define el comportamiento predeterminado y las directrices obligatorias al diseñar o modificar scripts de procesamiento de datos, flujos de extracción y conexiones de bases de datos dentro del ecosistema Synapse.
+
+## 🐍 1. Procesamiento y Lógica de Datos (Python)
+
+Al escribir scripts de extracción o procesamiento de datos, debes adherirte estrictamente a estas reglas:
+
+*   **🔐 Seguridad y Variables de Entorno (Zero Trust):**
+    *   **Prohibición absoluta:** Nunca (hardcodees) quemar credenciales, tokens, IPs, o rutas sensibles en el código fuente.
+    *   Utiliza siempre la librería `python-dotenv`.
+    *   Lee los parámetros (ej. `DB_SERVER`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `FTP_URI`) desde un archivo `.env` dedicado por proyecto o automatización.
+    *   Asegúrate de que los archivos `.env` estén en el `.gitignore`.
+    *   **Tailscale / Zero Trust:** Las conexiones a SQL Server (ej. `10.200.8.5\efficacis3`) se manejan a través del túnel Tailscale. Nunca asumas puertos expuestos a Internet.
+
+*   **🛡️ Conexiones a Bases de Datos Seguras:**
+    *   Utiliza `pyodbc` o `sqlalchemy` para la conexión a SQL Server.
+    *   **Prevención de Inyección SQL:** Usa **siempre** consultas parametrizadas (ej. con marcadores `?` en `pyodbc`) para operaciones `INSERT`, `UPDATE` o `SELECT` dinámicas. NUNCA concatenes strings para formar sentencias SQL.
+
+*   **🧩 Separación de Lógica (Modularidad):**
+    *   Aísla la lógica de acceso a datos (ej. extrayendo las queries a funciones separadas o archivos `_logic.py`) de la interfaz principal o del script orquestador.
+    *   Cada script debe tener un único propósito (Principio de Responsabilidad Única) y retornar excepciones descriptivas (evita fallar silenciosamente).
+
+*   **⚠️ Manejo de Errores y Transacciones (ACID):**
+    *   Usa siempre bloques `try...except...finally` para manejar las conexiones.
+    *   **Escrituras seguras:** Toda operación de escritura (`INSERT`/`UPDATE`) debe implementar `commit()` en caso de éxito, y `rollback()` en caso de error.
+    *   Asegura la liberación de recursos cerrando conexiones y cursores (`cursor.close()`, `conn.close()`) en el bloque `finally`.
+
+*   **⚡ Eficiencia en el Procesamiento:**
+    *   Para el cruce masivo de información, evita bucles `for` ineficientes en Python si se puede realizar un cruce pre-agregado en SQL (`CROSS APPLY`, `LEFT JOIN`).
+    *   Si realizas inserciones masivas en BD, utiliza `executemany()` configurando `fast_executemany = True` en `pyodbc`, en lugar de iterar registro por registro.
+    *   Controla el uso de RAM leyendo grandes volúmenes de datos por bloques o definiendo un `BATCH_SIZE`.
+
+## 🌐 2. Mejores Prácticas para Extracción FTP / SFTP
+
+Las conexiones de transferencia de archivos son el punto más frágil de un pipeline ETL. Sigue estas reglas al interactuar con FTP:
+
+*   **Gestión de Descargas Resiliente:**
+    *   Implementa bloques de reintentos (Retries) con retraso exponencial (Backoff) para tolerar desconexiones transitorias, caídas temporales de red o timeouts del servidor.
+*   **Integridad y Transferencias Incompletas:**
+    *   Evita procesar archivos que aún se están cargando en el servidor FTP. Verifica que el archivo está completamente cargado (p. ej., controlando el tamaño, buscando extensiones `.tmp` previas o validando con archivos *trigger* como `.done` si el origen lo permite).
+*   **Manejo de Errores Locales Post-Descarga:**
+    *   Una vez extraído el archivo (ej. `Inventario.txt`), valida su estructura y formato (encoding UTF-8, conteo de columnas, formato de ancho fijo). Si la estructura cambia de lo esperado, levanta un error claro de validación (Schema Drift).
+
+## 🛡️ 3. Protocolo Estricto de Resiliencia (Los 4 Pilares)
+
+Todo script ETL en producción (ej. scripts de droguerías) debe implementar obligatoriamente los siguientes 4 puntos:
+
+1. **Logging Estructurado (JSON) y Timeouts Globales:**
+   - Todo script debe usar el módulo `logger.py` (`from logger import get_logger`) en lugar de `print()`. 
+   - Las salidas deben ser en formato JSON estructurado para compatibilidad nativa con n8n.
+   - Definir siempre `socket.setdefaulttimeout(30)` al inicio del archivo para evitar bloqueos infinitos por latencia de red.
+   - Envolver la ejecución de `main()` en un bloque `try/except` general que registre el error crítico usando el logger y termine la ejecución con `sys.exit(1)`.
+
+2. **Procesamiento Tolerante a Fallos (DLQ) y Preservación Cruda:**
+   - Antes de parsear cualquier archivo, los datos originales (crudos) deben preservarse en disco físico usando `preserve_raw_bytes()` o guardados en un directorio tipo `/opt/data/raw_inbound/`.
+   - En caso de un fallo en tiempo de ejecución, el archivo problemático debe moverse a un "Dead-Letter Queue" (directorio `/opt/data/quarantine/`) usando la función `quarantine()`.
+
+3. **Idempotencia Estricta en Ingesta SQL (Hashes y MERGE):**
+   - **Hashes:** Utilizar `hashlib.sha256()` para calcular la huella digital del archivo/payload en memoria. Consultar en SQL (ej. tabla `InboundFilesLog`) si el hash ya fue procesado con éxito (`is_file_processed`). Si existe, **saltar inmediatamente** el procesamiento para evitar uso redundante de CPU/Red.
+   - Si el archivo es nuevo, procesarlo e insertarlo registrando el hash con `mark_file_processed` tras una ingesta exitosa.
+   - **MERGE:** Migrar siempre los flujos de base de datos a sentencias `MERGE` (`MATCHED THEN UPDATE` / `NOT MATCHED THEN INSERT`), prohibiendo el uso de inserts ciegos (`INSERT`) que podrían generar datos duplicados si la base de datos pierde la sincronización.
+
+4. **Estabilización de Recursos (OOM):**
+   - Respetar los límites de RAM del sistema al leer los archivos en memoria. Usar `BytesIO` o procesamiento por bloques (chunks/generators) si el archivo es extremadamente grande.
+
+## 🤖 Instrucción Operativa para el Agente
+
+Cada vez que se te solicite:
+1. Crear un script de extracción de datos.
+2. Procesar un archivo Excel/CSV/TXT.
+3. Diseñar una conexión a SQL Server vía Python.
+4. Refactorizar scripts antiguos de droguerías u otros proveedores.
+
+Debes aplicar de forma proactiva estas prácticas (uso del `.env`, transacciones seguras con rollback, logger estructurado, DLQ, Idempotencia por Hashes y MERGE upserts) sin necesidad de que el usuario lo solicite explícitamente.
