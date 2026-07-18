@@ -1,13 +1,63 @@
 # SRV-SQL-AMC — Security Hardening
 
 **Server:** `SRV-SQL-AMC` (`10.200.8.5`)  
-**Applied:** 2026-07-07  
-**Network:** Internal LAN `10.200.8.0/24` + ZeroTier `10.147.18.192`  
+**Applied:** 2026-07-07 (updated 2026-07-18 — SQL VPN access)  
 **Exposure:** Not internet-routable (private IP). Main risk = lateral movement on LAN.
 
 ---
 
-## Open ports (before hardening)
+## srv-sql-amc — all IPs
+
+| Network | IP | Route | Use |
+|---------|-----|-------|-----|
+| **Tailscale** | `100.94.5.108` | Primary VPN | `DB_SERVER` default |
+| **ZeroTier** | `10.147.18.192` | Alternative VPN | Plan B if Tailscale fails |
+| **LAN** | `10.200.8.5` | On-premises only | Local admin / batch on site |
+
+**Instance:** `Saint\efficacis3` (dynamic port **49751**)
+
+---
+
+## SQL Server access (VPN)
+
+| Port | Protocol | Purpose | Allowed from |
+|------|----------|---------|--------------|
+| **49751** | TCP | SQL Server instance (`efficacis3`) | Tailscale `100.64.0.0/10`, ZeroTier `10.147.18.0/24`, admin `10.200.8.167` |
+| **1434** | UDP | SQL Server Browser (resolves `\efficacis3`) | Same as above |
+
+### Firewall rule names (SQL)
+
+- `SecAllow-SQL-TCP49751-Tailscale`
+- `SecAllow-SQL-TCP49751-ZeroTier`
+- `SecAllow-SQL-TCP49751-AdminLAN`
+- `SecAllow-SQL-UDP1434-Tailscale`
+- `SecAllow-SQL-UDP1434-ZeroTier`
+- `SecAllow-SQL-UDP1434-AdminLAN`
+
+### Connection strings (plan B)
+
+```text
+# Primary (Tailscale)
+DB_SERVER=100.94.5.108,49751
+
+# Fallback (ZeroTier)
+DB_SERVER=10.147.18.192,49751
+
+# Named instance (requires UDP 1434)
+DB_SERVER=100.94.5.108\efficacis3
+DB_SERVER=10.147.18.192\efficacis3
+```
+
+### Verify SQL ports
+
+```powershell
+Test-NetConnection 100.94.5.108 -Port 49751
+Test-NetConnection 10.147.18.192 -Port 49751
+```
+
+---
+
+## Open ports (admin services — hardened)
 
 | Port | Service | Risk |
 |------|---------|------|
@@ -98,10 +148,9 @@ foreach ($port in $ports) {
 
 | IP | Interface |
 |----|-----------|
-| `10.200.8.5` | Ethernet (LAN) |
-| `10.147.18.192` | ZeroTier |
-| `10.252.1.12` | (secondary) |
-| `169.254.83.107` | Link-local |
+| `10.200.8.5` | Ethernet0 (LAN) |
+| `10.147.18.192` | Ethernet 2 (ZeroTier) |
+| `100.94.5.108` | Tailscale |
 
 ---
 
